@@ -32,6 +32,21 @@ import java.text.SimpleDateFormat
 
 System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn")
 
+def cli = new CliBuilder(usage: 'hl7send.groovy -p port [-h host] -[itmrc --no-root] [field=val ...] file [file ...]')
+cli._(longOpt:'help', 'Show this usage information')
+cli.h(longOpt:'hostname', args:1, 'Destination host (default localhost)')
+cli.p(longOpt:'port', args:1, required:true, 'Destination port')
+cli.i(longOpt:'no-id', 'Do not auto-generate Message Control Id (MSH-10)')
+cli.t(longOpt:'no-timestamp', 'Do not update timestamp (MSH-7)')
+cli.m(longOpt:'show-message', 'Show the text of the message that is sent')
+cli.r(longOpt:'show-response', "Show the ACK message")
+cli.c(longOpt:'continue-on-ack-error', 'Continue sending messages even if ACK response is failure or rejection')
+cli._(longOpt:'no-root', 'Do not prepend root prefix to HL7 field value specifications')
+cli._(longOpt:'no-color', 'Do use color when writing HL7 to terminal')
+
+def options = cli.parse(args)
+def color = !options.'no-color'
+
 class ControlIdGenerator
 {
   static def nextSequence = -1
@@ -54,22 +69,60 @@ def fail(error) {
   System.exit(1)
 }
 
-def printableHl7(txt) {
-  return txt.replace('\r', '\n');
+class Colors {
+  static final String ANSI_RESET = "\u001B[0m"
+  static final String ANSI_BLACK = "\u001B[30m"
+  static final String ANSI_RED = "\u001B[31m"
+  static final String ANSI_GREEN = "\u001B[32m"
+  static final String ANSI_YELLOW = "\u001B[33m"
+  static final String ANSI_BLUE = "\u001B[34m"
+  static final String ANSI_PURPLE = "\u001B[35m"
+  static final String ANSI_CYAN = "\u001B[36m"
+  static final String ANSI_WHITE = "\u001B[37m"
+  static final String ANSI_BOLD = "\033[0;1m"
 }
 
-def cli = new CliBuilder(usage: 'hl7send.groovy -p port [-h host] -[itmrc --no-root] [field=val ...] file [file ...]')
-cli._(longOpt:'help', 'Show this usage information')
-cli.h(longOpt:'hostname', args:1, 'Destination host (default localhost)')
-cli.p(longOpt:'port', args:1, required:true, 'Destination port')
-cli.i(longOpt:'no-id', 'Do not auto-generate Message Control Id (MSH-10)')
-cli.t(longOpt:'no-timestamp', 'Do not update timestamp (MSH-7)')
-cli.m(longOpt:'show-message', 'Show the text of the message that is sent')
-cli.r(longOpt:'show-response', "Show the ACK message")
-cli.c(longOpt:'continue-on-ack-error', 'Continue sending messages even if ACK response is failure or rejection')
-cli._(longOpt:'no-root', 'Do not prepend root prefix to HL7 field value specifications')
+def reset(StringBuilder sb) {
+  sb.append(Colors.ANSI_RESET)
+}
 
-def options = cli.parse(args)
+def colorPrint(String hl7) {
+
+  StringBuilder result = new StringBuilder()
+
+  lines = hl7.split('\n')
+
+  for (line in lines) {
+
+    result.append(Colors.ANSI_BOLD)
+    result.append(Colors.ANSI_WHITE)
+
+    def cmap = [
+        '|': Colors.ANSI_GREEN,
+        '^': Colors.ANSI_YELLOW,
+        '~': Colors.ANSI_PURPLE,
+        '&': Colors.ANSI_CYAN
+    ]
+
+    for (c in line) {
+      def color = cmap.get(c)
+      if (color) {
+        result.append(color)
+        result.append(c)
+        reset(result)
+      } else {
+        result.append(c)
+      }
+    }
+    result.append('\n')
+  }
+  result.toString()
+}
+
+def printableHl7(txt, boolean color = false) {
+  def result = txt.replace('\r', '\n')
+  return (color) ? colorPrint(result) : result
+}
 
 if (!options) System.exit(1)
 
@@ -110,7 +163,7 @@ for (path in paths) {
 
   Message hl7message = parser.parse(messageText)
 
-  MSH msh = (MSH) hl7message.get("MSH");
+  MSH msh = (MSH) hl7message.get("MSH")
 
   // Set Message Control ID
   if (!options.t) {
@@ -130,7 +183,7 @@ for (path in paths) {
     terser.set(field, spec.value)
   }
 
-  if (options.m) println "Sending:\n${printableHl7(parser.encode(hl7message))}"
+  if (options.m) println "Sending:\n${printableHl7(parser.encode(hl7message), color)}"
 
   Connection connection = context.newClient(hostname, port, false)
 
@@ -139,19 +192,19 @@ for (path in paths) {
 
   println "Sent ${msh.messageType.messageCode} ${msh.messageControlID}"
 
-  if (options.r) println "Got response:\n${printableHl7(parser.encode(response))}"
+  if (options.r) println "Got response:\n${printableHl7(parser.encode(response), color)}"
 
   // Check the response
-  MSA responseMSA = (MSA)response.get("MSA");
+  MSA responseMSA = (MSA)response.get("MSA")
   if (!responseMSA) fail("Response is not a valid ack")
 
-  def ackMsg;
+  def ackMsg
   switch (responseMSA.acknowledgmentCode.value) {
     case "AA":
       break
     case "AR":
       ackMsg = "REJECTED"
-      break;
+      break
     default:
       ackMsg = "ERROR"
       break
