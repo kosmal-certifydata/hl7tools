@@ -42,7 +42,8 @@ cli.m(longOpt:'show-message', 'Show the text of the message that is sent')
 cli.r(longOpt:'show-response', "Show the ACK message")
 cli.c(longOpt:'continue-on-ack-error', 'Continue sending messages even if ACK response is failure or rejection')
 cli._(longOpt:'no-root', 'Do not prepend root prefix to HL7 field value specifications')
-cli._(longOpt:'no-color', 'Do use color when writing HL7 to terminal')
+cli._(longOpt:'no-color', 'Do not use color when writing HL7 to terminal')
+cli._(longOpt:'no-send', 'Do not actually send the message, just display it')
 
 def options = cli.parse(args)
 def color = !options.'no-color'
@@ -183,7 +184,13 @@ for (path in paths) {
     terser.set(field, spec.value)
   }
 
-  if (options.m) println "Sending:\n${printableHl7(parser.encode(hl7message), color)}"
+  def boolean show = (options.'no-send') || options.m
+
+  if (show) println "${options.'no-send' ? '' : 'ending:\n'}${printableHl7(parser.encode(hl7message), color)}"
+
+  if (options.'no-send') {
+    fail("Did not send message because --no-send specified")
+  }
 
   Connection connection = context.newClient(hostname, port, false)
 
@@ -195,7 +202,7 @@ for (path in paths) {
   if (options.r) println "Got response:\n${printableHl7(parser.encode(response), color)}"
 
   // Check the response
-  MSA responseMSA = (MSA)response.get("MSA")
+  MSA responseMSA = (MSA) response.get("MSA")
   if (!responseMSA) fail("Response is not a valid ack")
 
   def ackMsg
